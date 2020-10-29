@@ -1,0 +1,520 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:validation="http://www.mulesoft.org/schema/mule/validation" xmlns:mongo="http://www.mulesoft.org/schema/mule/mongo"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/mongo http://www.mulesoft.org/schema/mule/mongo/current/mule-mongo.xsd
+http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd">
+	<flow name="put\(Resource)\(id):application\fhir+json" doc:id="e6c4e8a8-5361-46c5-8170-0daced298479" >
+		<set-variable value="#[attributes.uriParams.'id']" doc:name="resourceId" doc:id="e1438ade-464a-4954-a603-d03d674693f9" variableName="resourceId" />
+		<ee:transform doc:name="map new meta info" doc:id="e92d5774-d4a6-4750-809b-9bc17b96a26e">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	id: vars.resourceId,
+	(payload - "id" - "meta"),
+	meta: {
+		versionId: payload.meta.versionId + 1,
+		lastUpdated: (now() >> "UTC")
+	}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<mongo:find-one-and-update-document doc:name="update primary entry" doc:id="115bf943-6e83-4f55-a210-8d863eb6de8b" target="updateResult" collectionName="${fhirCollectionName}" config-ref="MongoDB_Config">
+			<mongo:find-query><![CDATA[#[output application/json
+---
+{ "_id": { "\$oid": vars.resourceId } }]]]></mongo:find-query>
+			<mongo:content-to-update><![CDATA[#[output application/json
+---
+payload - "id"]]]></mongo:content-to-update>
+		</mongo:find-one-and-update-document>
+		<mongo:insert-document collectionName="${fhirCollectionName}-history" doc:name="insert historical entry" doc:id="6c2b1bb6-139f-4b11-b0b3-dc3ac8201043" target="historyResult" config-ref="MongoDB_Config">
+			<mongo:document><![CDATA[#[output application/json
+---
+{
+	resourceId: vars.resourceId,
+	resource: payload,
+	request: {
+		method: "PUT"
+	},
+	response: {
+		status: "200 OK"
+	}
+}]]]></mongo:document>
+		</mongo:insert-document>
+		<error-handler >
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="b8f6d22e-300e-46c7-be1e-b4d18377d746" type="ANY" >
+				<ee:transform doc:name="set 404 OperationOutcome + StatusCode" doc:id="72b6b252-ec3c-4650-9167-b939148e7661" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[output application/json
+---
+{
+  "resourceType": "OperationOutcome",
+  "text": {
+    "status": "generated",
+    "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\"><h1>Operation Outcome</h1><table border=\"0\"><tr><td style=\"font-weight: bold;\">ERROR</td><td>[]</td><td><pre>Resource $(p('fhirResourceName'))/$(vars.resourceId) is not known</pre></td>\n\t\t\t\t\t\n\t\t\t\t\n\t\t\t</tr>\n\t\t</table>\n\t</div>"
+  },
+  "issue": [ {
+    "severity": "error",
+    "code": "processing",
+    "diagnostics": "Resource $(p('fhirResourceName'))/$(vars.resourceId) is not known"
+  } ]
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="httpStatus" ><![CDATA[404]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</on-error-continue>
+		</error-handler>
+	</flow>
+	<flow name="delete\(Resource)\(id)" doc:id="04e4909e-a5ca-4078-b604-99c4fb4bfd8c" >
+		<set-variable value="#[attributes.uriParams.'id']" doc:name="resourceId" doc:id="b6ff8890-4087-4068-9ed2-880da37b4470" variableName="reosurceId" />
+		<mongo:find-one-document collectionName="${fhirCollectionName}" doc:name="find specific resource" doc:id="58f9f34a-557f-4497-8e6a-ba0f74febb72" target="originalResource" config-ref="MongoDB_Config">
+			<mongo:find-query><![CDATA[#[output application/json
+---
+{ "_id": { "\$oid": attributes.uriParams.id } }]]]></mongo:find-query>
+		</mongo:find-one-document>
+		<mongo:remove-documents doc:name="delete resource" doc:id="de52b8cb-7cf3-42bc-b485-236a96517fd2" collectionName="${fhirCollectionName}" config-ref="MongoDB_Config">
+			<mongo:find-query><![CDATA[#[output application/json
+---
+{ "_id": { "\$oid": attributes.uriParams.id } }]]]></mongo:find-query>
+		</mongo:remove-documents>
+		<mongo:insert-document collectionName="${fhirCollectionName}" doc:name="insert historical entry" doc:id="c35f308a-a27f-4d21-b8ee-98f02f99881a" config-ref="MongoDB_Config">
+			<mongo:document><![CDATA[#[output application/json
+---
+{
+	resourceId: vars.resourceId,
+	happenedOn: (now() >> "UTC"),
+	request: {
+		method: "DELETE"
+	},
+	response: {
+		status: "200 OK"
+	}
+}]]]></mongo:document>
+		</mongo:insert-document>
+		<ee:transform doc:name="set OperationOutcome + 200 OK" doc:id="1494f5b7-575b-4cb0-b5a8-dc98e065c6fc">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  "resourceType": "OperationOutcome",
+  "text": {
+    "status": "generated",
+    "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\"><h1>Operation Outcome</h1><table border=\"0\"><tr><td style=\"font-weight: bold;\">INFORMATION</td><td>[]</td><td><pre>Successfully deleted 1 resource(s)</pre></td>\n\t\t\t\t\t\n\t\t\t\t\n\t\t\t</tr>\n\t\t</table>\n\t</div>"
+  },
+  "issue": [ {
+    "severity": "information",
+    "code": "informational",
+    "diagnostics": "Successfully deleted 1 resource(s)"
+  } ]
+}]]></ee:set-payload>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="httpStatus"><![CDATA[200]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<error-handler >
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="380a3a4f-b222-4ca2-8edc-28890ae83ae6" type="ANY" >
+				<ee:transform doc:name="set 404 OperationOutcome + StatusCode" doc:id="2abc67dd-5def-49f8-acff-67ba2c13f343" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[output application/json
+---
+{
+  "resourceType": "OperationOutcome",
+  "text": {
+    "status": "generated",
+    "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\"><h1>Operation Outcome</h1><table border=\"0\"><tr><td style=\"font-weight: bold;\">ERROR</td><td>[]</td><td><pre>Resource $(p('fhirResourceName'))/$(vars.resourceId) is not known</pre></td>\n\t\t\t\t\t\n\t\t\t\t\n\t\t\t</tr>\n\t\t</table>\n\t</div>"
+  },
+  "issue": [ {
+    "severity": "error",
+    "code": "processing",
+    "diagnostics": "Resource $(p('fhirResourceName'))/$(vars.resourceId) is not known"
+  } ]
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="httpStatus" ><![CDATA[404]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</on-error-continue>
+		</error-handler>
+	</flow>
+	<flow name="get\(Resource)" doc:id="e727b84f-17ac-4c2b-bb52-3d5b7f523086" >
+		<ee:transform doc:name="set common query params" doc:id="a2abfc59-229b-44a2-a4ab-53870050b861" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="queryConditions" ><![CDATA[output application/json
+
+var lastUpdated = do {
+	if (isEmpty(vars.httpAttributes.queryParams.'_lastUpdated')) null
+	else
+		vars.httpAttributes.queryParams.'_lastUpdated' match {
+			case lastUpdated matches /(gt|gte|lt|lte)(\d{4}-\d{2}-\d{2})/ -> { "\$$(lastUpdated[1])": lastUpdated[2] as Date }
+			else -> null
+		}
+}
+
+---
+
+{
+	((vars.queryConditions default {}) - "_id"),
+	("_id": { "\$oid": vars.httpAttributes.queryParams.'_id' }) if (not isEmpty(vars.httpAttributes.queryParams.'_id')),
+	("meta.lastUpdated": lastUpdated) if (not isEmpty(lastUpdated))
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<mongo:count-documents doc:name="Count documents" doc:id="d3c65b7a-7b5c-4f77-89ca-79a55df3ad75" collectionName="${fhirCollectionName}" config-ref="MongoDB_Config" target="resourceCount">
+			<mongo:condition-query ><![CDATA[#[output application/json
+---
+{
+	(vars.queryConditions default {})
+}]]]></mongo:condition-query>
+		</mongo:count-documents>
+		<mongo:find-documents doc:name="Find documents" doc:id="2cd960d5-d780-4df4-b36b-802d2aa132c9" config-ref="MongoDB_Config" collectionName="${fhirCollectionName}" resultLimit="#[vars.httpAttributes.queryParams['_count'] default 10]" numToSkip="#[vars.httpAttributes.queryParams['_offset'] default 0]">
+			<mongo:condition-query ><![CDATA[#[output application/json
+---
+{
+	(vars.queryConditions default {})
+}]]]></mongo:condition-query>
+		</mongo:find-documents>
+		<ee:transform doc:name="map results to bundle" doc:id="54de7289-5e99-4c46-9f0d-b0ebefc6740a" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+
+import buildRequestUri from dw::fhir::helpers
+
+var requestUri = (override: Object = {}) ->
+	buildRequestUri(
+		vars.httpAttributes.requestPath default "", 
+		vars.httpAttributes.queryParams default {}, 
+		override default {}
+	)
+	
+var offset = vars.httpAttributes.queryParams.'_offset'
+var count = vars.httpAttributes.queryParams.'_count'
+---
+{
+	resourceType: "Bundle",
+	id: uuid(),
+	meta: {
+		lastUpdated: (now() >> "UTC")
+	},
+	total: vars.resourceCount,
+	link: [
+		{
+			relation: "self",
+			url: p('baseUrl') ++ requestUri()
+		},
+		({
+			relation: "previous",
+			url: p('baseUrl') ++ requestUri({ "_offset": max([offset - count,0]) })	
+		}) if ((offset - count) >= 0 or offset > 0),
+		({
+			relation: "next",
+			url: p('baseUrl') ++ requestUri({ "_offset": count + offset })
+		}) if ((count + offset) <= vars.resourceCount)
+	],
+	entry: payload map {
+		fullUrl: p('baseUrl') ++ "/$(p('fhirResourceName'))/" ++ $['_id'],
+		id: $.'_id',
+		($ - "_id")
+	}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</flow>
+	<flow name="get\(Resource)\(id)\_history" doc:id="224b03b3-1ad6-41f7-9810-8d2a8cbb5183" >
+		<set-variable value="#[attributes.uriParams.'id']" doc:name="resourceId" doc:id="29e6df94-9e6e-4ec2-aa2b-d2059ba1428d" variableName="resourceId" />
+		<mongo:count-documents collectionName="${fhirCollectionName}-history" doc:name="Count documents" doc:id="a7b7653d-3ce7-47fc-ab0e-ca2482da67fc" config-ref="MongoDB_Config" target="resourceCount">
+			<mongo:condition-query><![CDATA[#[output application/json
+---
+{ "resourceId": attributes.uriParams.'id' }]]]></mongo:condition-query>
+		</mongo:count-documents>
+		<mongo:find-documents doc:name="find all history entries" doc:id="ba7f6e26-12d6-41f3-bc14-d819e364ab64" collectionName="${fhirCollectionName}-history" config-ref="MongoDB_Config" resultLimit="#[vars.httpAttributes.queryParams['_count'] default 10]" numToSkip="#[vars.httpAttributes.queryParams['_offset'] default 0]">
+			<mongo:condition-query><![CDATA[#[output application/json
+---
+{ "resourceId": attributes.uriParams.'id' }]]]></mongo:condition-query>
+		</mongo:find-documents>
+		<validation:is-not-empty-collection doc:id="d52a35bb-0459-48fe-b8c2-3770b464225c" />
+		<ee:transform doc:name="map results to bundle" doc:id="9e27df35-4a8e-4a5c-bca9-8b9dbe01b35d">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+
+import buildRequestUri from dw::fhir::helpers
+
+var requestUri = (override: Object = {}) ->
+	buildRequestUri(
+		vars.httpAttributes.requestPath default "",
+		vars.httpAttributes.queryParams default {}, 
+		override default {}
+	)
+	
+var offset = vars.httpAttributes.queryParams.'_offset'
+var count = vars.httpAttributes.queryParams.'_count'
+
+---
+{
+	resourceType: "Bundle",
+	id: uuid(),
+	meta: {
+		lastUpdated: (now() >> "UTC")
+	},
+	"type": "history",
+	total: vars.resourceCount,
+	link: [
+		{
+			relation: "self",
+			url: p('baseUrl') ++ requestUri()
+		},
+		({
+			relation: "previous",
+			url: p('baseUrl') ++ requestUri({ "_offset": max([offset - count,0]) })	
+		}) if ((offset - count) >= 0 or offset > 0),
+		({
+			relation: "next",
+			url: p('baseUrl') ++ requestUri({ "_offset": count + offset })
+		}) if ((count + offset) <= vars.resourceCount)
+	],
+	entry: payload map {
+		fullUrl: p('baseUrl') ++ "/$(p('fhirResourceName'))/" ++ vars.resourceId ++ "/_history/" ++ $.resource.meta.versionId,
+		($ - "resourceId" - "happenedOn")
+	}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<error-handler >
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="d4f3a4cb-5627-4959-a837-cb13ca64550e" type="ANY" >
+				<ee:transform doc:name="set 404 OperationOutcome + StatusCode" doc:id="449c165e-e351-4a92-8ff1-35da8e846e61" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[output application/json
+---
+{
+  "resourceType": "OperationOutcome",
+  "text": {
+    "status": "generated",
+    "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\"><h1>Operation Outcome</h1><table border=\"0\"><tr><td style=\"font-weight: bold;\">ERROR</td><td>[]</td><td><pre>Resource $(p('fhirResourceName'))/$(vars.resourceId) is not known</pre></td>\n\t\t\t\t\t\n\t\t\t\t\n\t\t\t</tr>\n\t\t</table>\n\t</div>"
+  },
+  "issue": [ {
+    "severity": "error",
+    "code": "processing",
+    "diagnostics": "Resource $(p('fhirResourceName'))/$(vars.resourceId) is not known"
+  } ]
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="httpStatus" ><![CDATA[404]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</on-error-continue>
+		</error-handler>
+	</flow>
+	<flow name="get\(Resource)\(id)" doc:id="114fb1b9-1eef-4694-9855-e80200583de7" >
+		<set-variable value="#[attributes.uriParams.id]" doc:name="resourceId" doc:id="1ee8d200-17ff-46aa-923c-56d3c72e23b3" variableName="resourceId" />
+		<try doc:name="Try" doc:id="e6ea8815-1498-4d35-80bd-92850cdbecea">
+			<mongo:find-one-document doc:name="find specific resource" doc:id="d9b6fb27-722f-4d48-92c3-fdce6688e3da" collectionName="${fhirCollectionName}" config-ref="MongoDB_Config">
+			<mongo:find-query><![CDATA[#[output application/json
+---
+{ "_id": { "\$oid": attributes.uriParams.id } }]]]></mongo:find-query>
+		</mongo:find-one-document>
+			<ee:transform doc:name="map Mongo ObjectId to id" doc:id="16fc8f7b-1fb1-400a-885b-b544bae4393d">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	id: payload["_id"]["\$oid"],
+	(payload - "_id")
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+			<error-handler>
+				<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="83b7745f-cd21-4cfa-84b5-0b3df72d3c25">
+					<mongo:find-one-document collectionName="${fhirCollectionName}-history" doc:name="check if historical data exists" doc:id="f8b21b62-b961-42e4-865c-a9982c6e966e" config-ref="MongoDB_Config">
+						<mongo:find-query><![CDATA[#[output application/json
+---
+{ "resourceId": attributes.uriParams.id, "request.method": "DELETE" }]]]></mongo:find-query>
+					</mongo:find-one-document>
+					<ee:transform doc:name="set OperationOutcome and 410 gone" doc:id="105b8f09-421a-4a52-8503-2f170656d103">
+						<ee:message>
+							<ee:set-payload><![CDATA[output application/json
+---
+{
+  "resourceType": "OperationOutcome",
+  "text": {
+    "status": "generated",
+    "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\"><h1>Operation Outcome</h1><table border=\"0\"><tr><td style=\"font-weight: bold;\">ERROR</td><td>[]</td><td><pre>Resource was deleted at $(payload.happenedOn)</pre></td>\n\t\t\t\t\t\n\t\t\t\t\n\t\t\t</tr>\n\t\t</table>\n\t</div>"
+  },
+  "issue": [ {
+    "severity": "error",
+    "code": "processing",
+    "diagnostics": "Resource was deleted at $(payload.happenedOn)"
+  } ]
+}]]></ee:set-payload>
+						</ee:message>
+						<ee:variables>
+							<ee:set-variable variableName="httpStatus"><![CDATA[410]]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+				</on-error-continue>
+			</error-handler>
+		</try>
+		<error-handler >
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="3a83f7b2-f03c-45cd-8861-43199f389781" type="ANY" >
+				<ee:transform doc:name="set 404 OperationOutcome + StatusCode" doc:id="9c520dcf-8a78-44c2-99e5-e1e9a4468c84" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[output application/json
+---
+{
+  "resourceType": "OperationOutcome",
+  "text": {
+    "status": "generated",
+    "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\"><h1>Operation Outcome</h1><table border=\"0\"><tr><td style=\"font-weight: bold;\">ERROR</td><td>[]</td><td><pre>Resource $(p('fhirResourceName'))/$(vars.resourceId) is not known</pre></td>\n\t\t\t\t\t\n\t\t\t\t\n\t\t\t</tr>\n\t\t</table>\n\t</div>"
+  },
+  "issue": [ {
+    "severity": "error",
+    "code": "processing",
+    "diagnostics": "Resource $(p('fhirResourceName'))/$(vars.resourceId) is not known"
+  } ]
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="httpStatus" ><![CDATA[404]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</on-error-continue>
+		</error-handler>
+	</flow>
+	<sub-flow name="transform-output-to-accept-header" doc:id="6d8c4c8a-49b8-4741-a6bd-a8eecebf0e81" >
+		<choice doc:name="Choice" doc:id="08048cb3-83a1-4277-b638-fadbd12816d5">
+			<when expression='#[vars.requestedFormat == "application/fhir+xml"]'>
+				<ee:transform doc:name="convert json to application/fhir+xml" doc:id="d1d84571-beb9-4e49-942a-d77d2651ace4">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/fhir+xml
+import * from dw::fhir::jsonToXml
+---
+toFhirXml(payload)]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<ee:transform doc:name="convert json to application/fhir+json" doc:id="7ae19e0a-46a9-4956-8b3c-cd28cd053f91">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/fhir+json
+---
+payload]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</otherwise>
+		</choice>
+	</sub-flow>
+	<sub-flow name="fhir-set-common-variables" doc:id="19bcc3d4-2287-4a38-9181-0fcaf7f26ef2" >
+		<set-variable value="#[attributes.headers.accept]" doc:name="requestedFormat" doc:id="e66e81bd-f23d-47b8-8c04-f602ea736e95" variableName="requestedFormat" />
+		<set-variable value="#[{
+	(attributes - &quot;queryParams&quot;),
+	queryParams: {
+		(attributes.queryParams - &quot;_count&quot;),
+		&quot;_count&quot;: attributes.queryParams.'_count' default 10,
+		&quot;_offset&quot;: attributes.queryParams.'_offset' default 0
+	}
+}]" doc:name="httpAttributes" doc:id="d2774e1f-c7fb-4b40-acf7-665ae494d1f7" variableName="httpAttributes" />
+	</sub-flow>
+	<flow name="get\(Resource)\(id)\_history\(vid)" doc:id="fbfe8b4f-7e0d-491a-af90-15763b6fdb9f" >
+		<set-variable value="#[attributes.uriParams.'id']" doc:name="resourceId" doc:id="ecc06132-d34c-4f5e-b2d6-b3664d3b6b32" variableName="resourceId" />
+		<set-variable value="#[attributes.uriParams.'vid']" doc:name="versionId" doc:id="0647fa8e-c592-4ed1-8af1-67e2844463de" variableName="versionId" />
+		<mongo:find-one-document collectionName="${fhirCollectionName}-history" doc:name="find historical record" doc:id="f8ab89a1-bdf9-4b96-a4ff-a3cfd69905cb" config-ref="MongoDB_Config">
+			<mongo:find-query><![CDATA[#[output application/json
+---
+{ "resourceId": vars.resourceId, "resource.meta.versionId": (vars.versionId as Number) }]]]></mongo:find-query>
+		</mongo:find-one-document>
+		<ee:transform doc:name="return just resource" doc:id="f8b3d46a-3761-4469-9921-7679b82e3ba0">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload.resource]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<error-handler >
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="365c2827-16b5-4706-afae-46351f411448" type="MONGO:ILLEGAL_ARGUMENT, MONGO:UNKNOWN, EXPRESSION" >
+				<ee:transform doc:name="set 404 OperationOutcome + StatusCode" doc:id="70c12cad-4d42-46c9-8160-6bea431678a9" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[output application/json
+---
+{
+  "resourceType": "OperationOutcome",
+  "text": {
+    "status": "generated",
+    "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\"><h1>Operation Outcome</h1><table border=\"0\"><tr><td style=\"font-weight: bold;\">ERROR</td><td>[]</td><td><pre>Version &quot;$(vars.versionId)&quot; is not valid for resource $(p('fhirResourceName'))/$(vars.resourceId)</pre></td>\n\t\t\t\t\t\n\t\t\t\t\n\t\t\t</tr>\n\t\t</table>\n\t</div>"
+  },
+  "issue": [ {
+    "severity": "error",
+    "code": "processing",
+    "diagnostics": "Version \"$(vars.versionId)\" is not valid for resource $(p('fhirResourceName'))/$(vars.resourceId)"
+  } ]
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="httpStatus" ><![CDATA[404]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</on-error-continue>
+		</error-handler>
+	</flow>
+	<sub-flow name="post\(Resource):application\fhir+json" doc:id="25ebee0b-82ab-44cc-8b83-0bd0a924c999" >
+		<ee:transform doc:name="strip out ID and populate initial meta" doc:id="32af2eb7-5c52-42d3-8044-2fe4f48a94ba">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	(payload - "id"),
+	meta: {
+		versionId: 1,
+		lastUpdated: (now() >> "UTC")
+	}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<mongo:insert-document collectionName="${fhirCollectionName}" doc:name="create new primary record" doc:id="4b81097d-e7b7-4ca9-9cf3-ec6c297a59a6" target="newResourceId" config-ref="MongoDB_Config">
+			<mongo:document><![CDATA[#[output application/json
+---
+payload]]]></mongo:document>
+		</mongo:insert-document>
+		<ee:transform doc:name="remap mongo OID as resource ID" doc:id="6ce2ccc8-1d77-453f-a521-52958e3fbbe1">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	id: vars.newResourceId,
+	(payload)
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<mongo:insert-document doc:name="insert historical record" doc:id="b3f430b7-e204-4ff7-bdc8-e197f8f9196e" collectionName="${fhirCollectionName}-history" target="historyInsertResult" config-ref="MongoDB_Config">
+			<mongo:document><![CDATA[#[output applicatin/json
+---
+{
+	resourceId: payload.id,
+	resource: payload,
+	request: {
+		method: "POST"
+	},
+	response: {
+		status: "201 Created"
+	}
+}]]]></mongo:document>
+		</mongo:insert-document>
+	</sub-flow>
+</mule>
