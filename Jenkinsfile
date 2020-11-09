@@ -8,7 +8,7 @@ pipeline {
         branch 'issue-1'
       }
       steps {
-        build '../1hls-sys-fhir-r4-patient-api/dev'
+        build '1hls-sys-fhir-r4-patient-api/dev'
       }
     }
   }
