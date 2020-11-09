@@ -220,7 +220,7 @@ var count = vars.httpAttributes.queryParams.'_count'
 		({
 			relation: "next",
 			url: p('baseUrl') ++ requestUri({ "_offset": count + offset })
-		}) if ((count + offset - 1) <= vars.resourceCount)
+		}) if ((count + offset) < vars.resourceCount)
 	],
 	entry: payload map {
 		fullUrl: p('baseUrl') ++ "/$(p('fhirResourceName'))/" ++ $['_id'],
