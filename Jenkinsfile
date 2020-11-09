@@ -1,4 +1,5 @@
 pipeline {
+  agent any
   stage('Tirgger dev pipelines') {
     when {
       branch 'dev'
