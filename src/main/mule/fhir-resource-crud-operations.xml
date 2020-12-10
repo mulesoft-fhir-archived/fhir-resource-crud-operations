@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<mule xmlns:validation="http://www.mulesoft.org/schema/mule/validation" xmlns:mongo="http://www.mulesoft.org/schema/mule/mongo"
-	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
-	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
+	xmlns:mongo="http://www.mulesoft.org/schema/mule/mongo"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
 http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
 http://www.mulesoft.org/schema/mule/mongo http://www.mulesoft.org/schema/mule/mongo/current/mule-mongo.xsd
-http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd">
+http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
 	<flow name="put\(Resource)\(id):application\fhir+json" doc:id="e6c4e8a8-5361-46c5-8170-0daced298479" >
 		<set-variable value="#[attributes.uriParams.'id']" doc:name="resourceId" doc:id="e1438ade-464a-4954-a603-d03d674693f9" variableName="resourceId" />
 		<ee:transform doc:name="map new meta info" doc:id="e92d5774-d4a6-4750-809b-9bc17b96a26e">
@@ -472,6 +473,7 @@ payload.resource]]></ee:set-payload>
 		</error-handler>
 	</flow>
 	<sub-flow name="post\(Resource):application\fhir+json" doc:id="25ebee0b-82ab-44cc-8b83-0bd0a924c999" >
+		<flow-ref doc:name="Flow Reference" doc:id="bf2ee499-18aa-481c-a80b-f3881ecd479d" name="data-validation"/>
 		<ee:transform doc:name="strip out ID and populate initial meta" doc:id="32af2eb7-5c52-42d3-8044-2fe4f48a94ba">
 			<ee:message>
 				<ee:set-payload><![CDATA[%dw 2.0
@@ -516,5 +518,35 @@ output application/json
 	}
 }]]]></mongo:document>
 		</mongo:insert-document>
+	</sub-flow>
+	<sub-flow name="data-validation" doc:id="e6acbe60-d590-4862-a7b9-fb0d8f51e312" >
+		<set-variable value="#[%dw 2.0
+output application/json
+fun fhirRefs(payload) = payload..reference reduce ((r, accum=[]) -&gt; do {
+    var parts = r splitBy '\/'
+    var resource = parts[0]
+    var key = parts[1]
+    ---
+    accum &lt;&lt; {
+        resource: resource,
+        key: key
+    }
+})
+---
+fhirRefs(payload)]" doc:name="Set Variable" doc:id="500c0798-c4ad-47a2-8294-c742f2c49db8" variableName="resource"/>
+		<logger level="INFO" doc:name="Logger" doc:id="5deec6b5-6c2c-44c7-af6a-73fcdb0fd812" message="----IN DATA VALIDATION----"/>
+		<foreach doc:name="For Each" doc:id="95436474-9857-477e-81f2-c9ba4e5d20ed" collection="#[vars.resource]">
+			<http:request method="GET" doc:name="Request" doc:id="114b3750-6bd9-4ed3-a57f-75e298c9b751" url="#[var prefix = if (p('env') == 'dev') 'dev-' else ''
+---
+'http://$(prefix)1hls-fhir-r4-v1.us-e2.cloudhub.io/$(payload.resource)/$(payload.key)']">
+				<error-mapping sourceType="HTTP:NOT_FOUND" targetType="APP:NOT_FOUND" />
+				<http:headers ><![CDATA[#[output application/java
+---
+{
+	"Accept" : "application/fhir+json",
+	"Content-Type" : "application/fhir+json"
+}]]]></http:headers>
+			</http:request>
+		</foreach>
 	</sub-flow>
 </mule>
